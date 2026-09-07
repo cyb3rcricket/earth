@@ -27,6 +27,9 @@
       <div class="telemetry-item"><span class="telemetry-label">PERIOD</span><span class="telemetry-val" id="periodDisplay">90.0s</span></div>
     </div>
 
+    <!-- Performance diagnostics telemetry overlay (toggled with hotkey 'D') -->
+    <div class="perf-telemetry-badge" id="perfTelemetryBadge" style="display: none;" aria-label="Performance diagnostics telemetry"></div>
+
     <!-- Minimalist Presentation Controls (bottom-right, unobtrusive) -->
     <aside class="hud-controls" id="hudControls">
       <button class="hud-toggle-btn" id="hudToggleBtn" title="Toggle Controls HUD" aria-label="Toggle Controls HUD">
@@ -63,6 +66,17 @@
           <label for="shadowStrength">Shadow Depth</label>
           <input type="range" id="shadowStrength" min="60" max="100" value="95" step="1">
           <span class="hud-val" id="shadowVal">95%</span>
+        </div>
+
+        <div class="hud-row">
+          <label for="qualitySelect">Graphics Quality</label>
+          <select id="qualitySelect" class="hud-select" aria-label="Select graphics quality preset">
+            <option value="auto">Auto (Adaptive)</option>
+            <option value="ultra">Ultra</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
         </div>
 
         <div class="hud-actions">

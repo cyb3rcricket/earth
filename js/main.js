@@ -19,6 +19,7 @@ import {
   CoronaGlowShader
 } from './shaders.js';
 import { EarthControls } from './controls.js';
+import { QualityManager, QUALITY_PRESETS } from './quality.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
@@ -210,6 +211,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 1. Earth Surface Mesh
   const surfaceMaterial = new THREE.ShaderMaterial({
+    defines: {
+      TERRAIN_SHADOW_STEPS: 6,
+      OCEAN_WAVE_OCTAVES: 3
+    },
     uniforms: {
       uDayTexture: { value: dayTexture },
       uNormalTexture: { value: normalTexture },
@@ -223,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
       uAtmosphereIntensity: { value: 100.0 },
       uShadowStrength: { value: 95.0 },
       uBumpTexelSize: { value: new THREE.Vector2(1.0 / 4096.0, 1.0 / 2048.0) },
-      uBumpScale: { value: 2.05 },
       uNormalScale: { value: 1.0 },
       uTerrainShadowStrength: { value: 1.0 },
       uTerrainShadowElevation: { value: 0.048 },
@@ -260,6 +264,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // 3. Atmosphere Rayleigh Limb Scattering Shell (radius 1.036)
   const atmoGeo = new THREE.SphereGeometry(1.036, 128, 128);
   const atmoMaterial = new THREE.ShaderMaterial({
+    defines: {
+      NUM_VIEW_SAMPLES: 16,
+      NUM_SUN_SAMPLES: 4
+    },
     uniforms: {
       uSunDirection: { value: sunDirection },
       uAtmosphereIntensity: { value: 100.0 }
@@ -292,6 +300,16 @@ document.addEventListener('DOMContentLoaded', () => {
   axialGroup.add(coronaMesh);
 
   // =========================================================================
+  // 4b. QUALITY & PERFORMANCE ARCHITECTURE
+  // =========================================================================
+  const qualityManager = new QualityManager({
+    renderer,
+    surfaceMaterial,
+    atmosphereMaterial: atmoMaterial,
+    camera
+  });
+
+  // =========================================================================
   // 5. INTERACTIVE CONTROLS & KINEMATICS
   // =========================================================================
   const controls = new EarthControls({
@@ -300,6 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
     earthGroup,
     cloudsGroup,
     surfaceMaterial,
+    qualityManager,
     onTelemetryUpdate: ({ altitude, coordinates, period }) => {
       if (altDisplay) altDisplay.textContent = altitude;
       if (coordsDisplay) coordsDisplay.textContent = coordinates;
@@ -415,15 +434,17 @@ document.addEventListener('DOMContentLoaded', () => {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
+    renderer.setPixelRatio(qualityManager.getEffectiveDpr());
   });
 
   // Expose handles on window for verification, diagnostics and telemetry
   window.earthControls = controls;
   window.surfaceMaterial = surfaceMaterial;
+  window.atmosphereMaterial = atmoMaterial;
   window.earthRenderer = renderer;
   window.earthScene = scene;
   window.earthCamera = camera;
+  window.earthQuality = qualityManager;
 
   // =========================================================================
   // 8. ANIMATION LOOP
@@ -433,6 +454,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function animate(now) {
     const dtSeconds = Math.min(0.064, (now - prevTimestamp) / 1000.0);
     prevTimestamp = now;
+
+    // Quality Manager telemetry & warmup benchmarking update
+    qualityManager.update(dtSeconds);
 
     // Advance ocean micro-normal animation when rotation/motion is active
     if (surfaceMaterial && surfaceMaterial.uniforms && surfaceMaterial.uniforms.uTime && !controls.isPaused && !controls.isReducedMotion) {

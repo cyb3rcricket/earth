@@ -21,6 +21,7 @@ export class EarthControls {
     earthGroup,
     cloudsGroup,
     surfaceMaterial,
+    qualityManager = null,
     onTelemetryUpdate
   }) {
     this.domElement = domElement;
@@ -28,6 +29,7 @@ export class EarthControls {
     this.earthGroup = earthGroup;
     this.cloudsGroup = cloudsGroup;
     this.surfaceMaterial = surfaceMaterial;
+    this.qualityManager = qualityManager;
     this.onTelemetryUpdate = onTelemetryUpdate;
 
     // Kinematics State
@@ -92,12 +94,25 @@ export class EarthControls {
     // Keyboard navigation
     el.addEventListener('keydown', this.onKeyDown.bind(this));
     window.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
       if (e.code === 'Space') {
         e.preventDefault();
         this.togglePause();
+      } else if (e.key === 'd' || e.key === 'D') {
+        if (this.qualityManager) {
+          this.qualityManager.toggleTelemetryOverlay();
+        }
       }
     });
+
+    // Quality tier selector binding
+    const qualitySelect = document.getElementById('qualitySelect');
+    if (qualitySelect && this.qualityManager) {
+      qualitySelect.value = this.qualityManager.selectedTier;
+      qualitySelect.addEventListener('change', (e) => {
+        this.qualityManager.setTier(e.target.value);
+      });
+    }
   }
 
   onPointerDown(e) {

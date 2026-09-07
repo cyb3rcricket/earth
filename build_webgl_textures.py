@@ -49,6 +49,9 @@ Examples:
   # Generate 2K (2048x1024) performance textures:
   python3 build_webgl_textures.py --preset 2k
 
+  # Build multi-resolution texture hierarchy (4K, 2K, 1K subdirectories):
+  python3 build_webgl_textures.py --multi-tier
+
   # Inspect inputs and targets without writing:
   python3 build_webgl_textures.py --dry-run
         """
@@ -101,7 +104,12 @@ Examples:
         "--normal-scale",
         type=float,
         default=2.05,
-        help="Scale factor for tangent-space normal gradient (default: 2.05, matching shader uBumpScale)"
+        help="Scale factor for tangent-space normal gradient (default: 2.05)"
+    )
+    parser.add_argument(
+        "--multi-tier",
+        action="store_true",
+        help="Build multi-resolution texture hierarchies (4K, 2K, 1K) into preset subdirectories under earth-dir"
     )
     parser.add_argument(
         "--dry-run",
@@ -396,6 +404,12 @@ def main():
         print(f" - Bump source    : {src_bump}")
         print(f" - Specular source: {src_spec}")
         print(f" - Clouds source  : {src_clouds}")
+        if args.multi_tier:
+            print("\n[Dry Run] Multi-tier hierarchy targets:")
+            for t in ['4k', '2k', '1k']:
+                tw, th = PRESETS[t]
+                td = os.path.join(earth_dir, t)
+                print(f" - Tier {t.upper():<2} ({tw}x{th}) -> {td}")
         print("[Dry Run] Complete. Exiting without modifications.")
         return
 

@@ -32,6 +32,10 @@
 import * as THREE from './three.module.js';
 
 export const EarthSurfaceShader = {
+  defines: {
+    TERRAIN_SHADOW_STEPS: 6,
+    OCEAN_WAVE_OCTAVES: 3
+  },
   uniforms: {
     uDayTexture: { value: null },
     uNormalTexture: { value: null },
@@ -45,7 +49,6 @@ export const EarthSurfaceShader = {
     uAtmosphereIntensity: { value: 100.0 },
     uShadowStrength: { value: 95.0 },
     uBumpTexelSize: { value: new THREE.Vector2(1.0 / 4096.0, 1.0 / 2048.0) },
-    uBumpScale: { value: 2.05 },
     uNormalScale: { value: 1.0 },
     uTerrainShadowStrength: { value: 1.0 },
     uTerrainShadowElevation: { value: 0.048 },
@@ -93,7 +96,6 @@ export const EarthSurfaceShader = {
     uniform float uAtmosphereIntensity;
     uniform float uShadowStrength;
     uniform vec2 uBumpTexelSize;
-    uniform float uBumpScale;
     uniform float uNormalScale;
     uniform float uTerrainShadowStrength;
     uniform float uTerrainShadowElevation;
@@ -118,6 +120,13 @@ export const EarthSurfaceShader = {
     const vec3 BETA_RAYLEIGH = vec3(5.8, 13.5, 33.1) * 2.0;
     const float H_RAYLEIGH = 0.0080;
     const float G_MIE = 0.78;
+
+    #ifndef TERRAIN_SHADOW_STEPS
+      #define TERRAIN_SHADOW_STEPS 6
+    #endif
+    #ifndef OCEAN_WAVE_OCTAVES
+      #define OCEAN_WAVE_OCTAVES 3
+    #endif
 
     void main() {
       vec3 viewDir = normalize(cameraPosition - vWorldPosition);
@@ -169,6 +178,7 @@ export const EarthSurfaceShader = {
       vec3 BLoc = cross(normLoc, TLoc);
 
       // Multi-octave isotropic cellular wave gradient in object-space coordinates
+#if OCEAN_WAVE_OCTAVES == 3
       vec3 pWave = normLoc * uOceanMicroWaveScale;
       float tDrift = uTime * 0.35;
 
@@ -196,6 +206,23 @@ export const EarthSurfaceShader = {
       vec3 gLoc = (c1 * s2 * d1 + s1 * c2 * d2) * 0.35
                 + (c3 * s4 * d3 + s3 * c4 * d4) * 0.18
                 + (c5 * s6 * d5 + s5 * c6 * d6) * 0.08;
+#elif OCEAN_WAVE_OCTAVES == 1
+      vec3 pWave = normLoc * uOceanMicroWaveScale;
+      float tDrift = uTime * 0.35;
+
+      vec3 d1 = vec3(0.894, 0.447, 0.0);
+      vec3 d2 = vec3(-0.447, 0.894, 0.0);
+
+      float ph1 = dot(d1, pWave) + tDrift * 0.8;
+      float ph2 = dot(d2, pWave) - tDrift * 0.6;
+
+      float s1 = sin(ph1), c1 = cos(ph1);
+      float s2 = sin(ph2), c2 = cos(ph2);
+
+      vec3 gLoc = (c1 * s2 * d1 + s1 * c2 * d2) * 0.35;
+#else
+      vec3 gLoc = vec3(0.0);
+#endif
 
       float slopeEast = dot(gLoc, TLoc);
       float slopeNorth = dot(gLoc, BLoc);
@@ -205,7 +232,7 @@ export const EarthSurfaceShader = {
       vec3 oceanNormal = normalize(norm + oceanTangentPerturb);
 
       // Cleanly blend surface normal between land terrain and ocean surface
-      vec3 surfaceNormal = mix(landNormal, oceanNormal, waterMask);
+      vec3 surfaceNormal = normalize(mix(landNormal, oceanNormal, waterMask));
 
       // Sunlight dot products
       float sunDot = dot(surfaceNormal, sunDir);
@@ -216,6 +243,7 @@ export const EarthSurfaceShader = {
       // -----------------------------------------------------------------------
       float terrainShadow = 1.0;
 
+#if TERRAIN_SHADOW_STEPS > 0
       // Execute horizon shadow raymarch strictly in the grazing terminator zone
       if (rawSunDot > -0.06 && rawSunDot < 0.28) {
         // Project incident sunlight vector into tangent plane (T, B)
@@ -237,8 +265,8 @@ export const EarthSurfaceShader = {
           float shadowOcclusion = 0.0;
           float hCenter = texture2D(uBumpTexture, vUv).r;
 
-          // 6-step directional shadow march facing the low-angle sun
-          for (int i = 1; i <= 6; i++) {
+          // Directional shadow march facing the low-angle sun
+          for (int i = 1; i <= TERRAIN_SHADOW_STEPS; i++) {
             float fi = float(i);
             vec2 sampleUv = vUv + stepUv * fi;
             sampleUv.x = fract(sampleUv.x); // seamless antimeridian wrap
@@ -264,6 +292,7 @@ export const EarthSurfaceShader = {
           terrainShadow = 1.0 - shadowFactor;
         }
       }
+#endif
 
       // -----------------------------------------------------------------------
       // 4. Daylight Surface Albedo, Cloud Shadow & Incident Sunlight Extinction
@@ -457,6 +486,10 @@ export const CloudsShader = {
 };
 
 export const AtmosphereShader = {
+  defines: {
+    NUM_VIEW_SAMPLES: 16,
+    NUM_SUN_SAMPLES: 4
+  },
   uniforms: {
     uSunDirection: { value: new THREE.Vector3(-1.4, 0.8, 1.2).normalize() },
     uAtmosphereIntensity: { value: 100.0 }
@@ -501,8 +534,12 @@ export const AtmosphereShader = {
     const float G_MIE = 0.78;
 
     // Raymarching sample counts
-    const int NUM_VIEW_SAMPLES = 16;
-    const int NUM_SUN_SAMPLES = 4;
+    #ifndef NUM_VIEW_SAMPLES
+      #define NUM_VIEW_SAMPLES 16
+    #endif
+    #ifndef NUM_SUN_SAMPLES
+      #define NUM_SUN_SAMPLES 4
+    #endif
 
     // Analytic Ray-Sphere Intersection
     bool intersectSphere(vec3 ro, vec3 rd, float rad, out float t1, out float t2) {
