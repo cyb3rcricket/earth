@@ -160,19 +160,30 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   const maxAnisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
 
-  function loadTexture(path, isColor = true) {
-    const tex = textureLoader.load(path);
+  function loadTexture(path, isColor = true, onLoad = null) {
+    const tex = textureLoader.load(path, (loadedTex) => {
+      if (onLoad) onLoad(loadedTex);
+    });
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.anisotropy = maxAnisotropy;
     if (isColor) {
       tex.colorSpace = THREE.SRGBColorSpace;
+    } else {
+      tex.colorSpace = THREE.NoColorSpace;
     }
     return tex;
   }
 
   const dayTexture = loadTexture('assets/earth/albedo.png', true);
-  const bumpTexture = loadTexture('assets/earth/bump.png', false);
+  const bumpTexture = loadTexture('assets/earth/bump.png', false, (tex) => {
+    if (tex.image && tex.image.width && tex.image.height && surfaceMaterial) {
+      surfaceMaterial.uniforms.uBumpTexelSize.value.set(
+        1.0 / tex.image.width,
+        1.0 / tex.image.height
+      );
+    }
+  });
   const nightTexture = loadTexture('assets/earth/night.png', true);
   const specularTexture = loadTexture('assets/earth/specular.png', false);
   const cloudsTexture = loadTexture('assets/earth/clouds.png', true);
@@ -208,7 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
       uCloudOffset: { value: 0.0 },
       uCloudOpacity: { value: 90.0 },
       uAtmosphereIntensity: { value: 100.0 },
-      uShadowStrength: { value: 95.0 }
+      uShadowStrength: { value: 95.0 },
+      uBumpTexelSize: { value: new THREE.Vector2(1.0 / 4096.0, 1.0 / 2048.0) },
+      uBumpScale: { value: 2.05 },
+      uTerrainShadowStrength: { value: 1.0 },
+      uTerrainShadowElevation: { value: 0.048 }
     },
     vertexShader: EarthSurfaceShader.vertexShader,
     fragmentShader: EarthSurfaceShader.fragmentShader
@@ -232,8 +247,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const cloudsMesh = new THREE.Mesh(cloudsGeo, cloudsMaterial);
   cloudsGroup.add(cloudsMesh);
 
-  // 3. Atmosphere Rayleigh Limb Scattering Shell (radius 1.025)
-  const atmoGeo = new THREE.SphereGeometry(1.025, 128, 128);
+  // 3. Atmosphere Rayleigh Limb Scattering Shell (radius 1.036)
+  const atmoGeo = new THREE.SphereGeometry(1.036, 128, 128);
   const atmoMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uSunDirection: { value: sunDirection },

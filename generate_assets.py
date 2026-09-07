@@ -6,12 +6,13 @@ Generates 2048x2048 textures for full 3D interactive rotation (-85° to +85° la
 2. assets/earth-clouds.png  (2048x2048 RGBA)
 3. assets/earth-night.png   (2048x2048 RGB)
 """
+import argparse
 import math
+import os
 import random
 import struct
 import time
 import zlib
-import os
 
 WIDTH = 2048
 HEIGHT = 2048
@@ -26,7 +27,9 @@ SW_WORLD = 512
 SH_WORLD = 256
 S_PAD_Y = (SH - SH_WORLD) // 2   # 128
 
-ASSETS_DIR = "/Users/celtninja/.gemini/antigravity/scratch/earth-3d/assets"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_ASSETS_DIR = os.path.join(SCRIPT_DIR, "assets")
+ASSETS_DIR = os.environ.get("EARTH_ASSETS_DIR", DEFAULT_ASSETS_DIR)
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
 def write_png_rgb(filename, width, height, rgb_bytes):
@@ -371,8 +374,16 @@ def make_noise_grid(seed=42, gw=SW, gh=SH):
     return grid
 
 def main():
+    global ASSETS_DIR
+    parser = argparse.ArgumentParser(description="Generate 2048x2048 procedural Earth textures (historical/legacy).")
+    parser.add_argument("--assets-dir", default=DEFAULT_ASSETS_DIR, help=f"Output directory for textures (default: {DEFAULT_ASSETS_DIR})")
+    args, _ = parser.parse_known_args()
+    ASSETS_DIR = os.path.abspath(args.assets_dir)
+    os.makedirs(ASSETS_DIR, exist_ok=True)
+
     t_start = time.time()
     print("🌍 Generating NASA-grade Earth assets (2048x2048 with Polar Extensions)...")
+    print(f"   Output Directory: {ASSETS_DIR}")
 
     # Latitude table for central world map
     lat_table = [90.0 - (y / float(H_WORLD)) * 180.0 for y in range(H_WORLD)]
