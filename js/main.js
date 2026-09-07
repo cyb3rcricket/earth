@@ -176,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const dayTexture = loadTexture('assets/earth/albedo.png', true);
+  const normalTexture = loadTexture('assets/earth/normal.png', false);
   const bumpTexture = loadTexture('assets/earth/bump.png', false, (tex) => {
     if (tex.image && tex.image.width && tex.image.height && surfaceMaterial) {
       surfaceMaterial.uniforms.uBumpTexelSize.value.set(
@@ -211,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const surfaceMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uDayTexture: { value: dayTexture },
+      uNormalTexture: { value: normalTexture },
       uBumpTexture: { value: bumpTexture },
       uNightTexture: { value: nightTexture },
       uSpecularTexture: { value: specularTexture },
@@ -222,6 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
       uShadowStrength: { value: 95.0 },
       uBumpTexelSize: { value: new THREE.Vector2(1.0 / 4096.0, 1.0 / 2048.0) },
       uBumpScale: { value: 2.05 },
+      uNormalScale: { value: 1.0 },
       uTerrainShadowStrength: { value: 1.0 },
       uTerrainShadowElevation: { value: 0.048 }
     },

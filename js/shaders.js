@@ -3,9 +3,10 @@
  *
  * Implements:
  * 1. EarthSurfaceShader:
- *    - Daylight satellite albedo modulated with terrain relief bump mapping
+ *    - Daylight satellite albedo modulated with precomputed tangent-space normal mapping
  *    - Specular Blinn-Phong sunglint on ocean waters (land remains diffuse)
  *    - Cloud shadow projection onto terrain
+ *    - Directional horizon self-shadowing from elevation bump map along terminator
  *    - Physically-derived Beer-Lambert solar extinction and golden terminator band
  *    - Land-masked night city lights with golden-amber incandescent glow
  *    - Atmospheric aerial perspective and stratospheric limb haze matching Rayleigh scattering
@@ -33,6 +34,7 @@ import * as THREE from './three.module.js';
 export const EarthSurfaceShader = {
   uniforms: {
     uDayTexture: { value: null },
+    uNormalTexture: { value: null },
     uBumpTexture: { value: null },
     uNightTexture: { value: null },
     uSpecularTexture: { value: null },
@@ -44,6 +46,7 @@ export const EarthSurfaceShader = {
     uShadowStrength: { value: 95.0 },
     uBumpTexelSize: { value: new THREE.Vector2(1.0 / 4096.0, 1.0 / 2048.0) },
     uBumpScale: { value: 2.05 },
+    uNormalScale: { value: 1.0 },
     uTerrainShadowStrength: { value: 1.0 },
     uTerrainShadowElevation: { value: 0.048 }
   },
@@ -69,6 +72,7 @@ export const EarthSurfaceShader = {
     precision highp float;
 
     uniform sampler2D uDayTexture;
+    uniform sampler2D uNormalTexture;
     uniform sampler2D uBumpTexture;
     uniform sampler2D uNightTexture;
     uniform sampler2D uSpecularTexture;
@@ -80,6 +84,7 @@ export const EarthSurfaceShader = {
     uniform float uShadowStrength;
     uniform vec2 uBumpTexelSize;
     uniform float uBumpScale;
+    uniform float uNormalScale;
     uniform float uTerrainShadowStrength;
     uniform float uTerrainShadowElevation;
 
@@ -119,42 +124,17 @@ export const EarthSurfaceShader = {
       vec3 B = cross(norm, T);
 
       // -----------------------------------------------------------------------
-      // 2. High-Precision Normal Perturbation (Sobel & Metric Tensor Scale)
+      // 2. High-Precision Normal Perturbation (Precomputed Tangent Normal Map)
       // -----------------------------------------------------------------------
-      vec2 texel = uBumpTexelSize;
-
-      // Equirectangular metric tensor scale compensation:
-      // Longitude meridians converge as sin(pi * v). Compensate with 1 / sin(pi * v)
-      // so high/mid-latitude relief (Himalayas, Alps, Rockies, Andes) is crisp & undistorted.
-      float scaleX = 1.0 / max(0.06, sin(PI * vUv.y));
-
-      // 3x3 Sobel neighborhood elevation samples
-      float h00 = texture2D(uBumpTexture, vUv + vec2(-texel.x, -texel.y)).r;
-      float h10 = texture2D(uBumpTexture, vUv + vec2( 0.0,     -texel.y)).r;
-      float h20 = texture2D(uBumpTexture, vUv + vec2( texel.x, -texel.y)).r;
-
-      float h01 = texture2D(uBumpTexture, vUv + vec2(-texel.x,  0.0)).r;
-      float hCenter = texture2D(uBumpTexture, vUv).r;
-      float h21 = texture2D(uBumpTexture, vUv + vec2( texel.x,  0.0)).r;
-
-      float h02 = texture2D(uBumpTexture, vUv + vec2(-texel.x,  texel.y)).r;
-      float h12 = texture2D(uBumpTexture, vUv + vec2( 0.0,      texel.y)).r;
-      float h22 = texture2D(uBumpTexture, vUv + vec2( texel.x,  texel.y)).r;
-
-      // Central elevation derivatives: dH/du and dH/dv
-      float dHdu = ((h20 + 2.0 * h21 + h22) - (h00 + 2.0 * h01 + h02)) * 0.125;
-      float dHdv = ((h02 + 2.0 * h12 + h22) - (h00 + 2.0 * h10 + h20)) * 0.125;
-
       // Specular water mask (1.0 on oceans/lakes, 0.0 on land)
       float specMask = texture2D(uSpecularTexture, vUv).r;
       float landMask = 1.0 - smoothstep(0.15, 0.70, specMask);
 
-      // Elevation gradient scaled by metric tensor, user bump scale, and land mask
-      float Gx = dHdu * scaleX * uBumpScale * landMask;
-      float Gy = dHdv * uBumpScale * landMask;
-
-      // High-precision perturbed normal
-      vec3 perturbedNormal = normalize(norm - (Gx * T + Gy * B));
+      // Tangent-space normal lookup from precomputed normal map
+      vec3 normalSample = texture2D(uNormalTexture, vUv).rgb;
+      vec3 nTan = normalSample * 2.0 - 1.0;
+      vec3 perturbedTan = vec3(nTan.xy * uNormalScale * landMask, nTan.z);
+      vec3 perturbedNormal = normalize(perturbedTan.x * T + perturbedTan.y * B + perturbedTan.z * norm);
 
       // Sunlight dot products
       float sunDot = dot(perturbedNormal, sunDir);
@@ -174,6 +154,9 @@ export const EarthSurfaceShader = {
         if (L_tan_len > 0.001) {
           vec2 sunDirTan = L_tangent / L_tan_len;
 
+          vec2 texel = uBumpTexelSize;
+          float scaleX = 1.0 / max(0.06, sin(PI * vUv.y));
+
           // Step vector in UV space compensated for latitude convergence
           vec2 stepUv = vec2(sunDirTan.x * scaleX * texel.x, sunDirTan.y * texel.y) * 2.8;
 
@@ -181,6 +164,7 @@ export const EarthSurfaceShader = {
           float sunSlope = (max(0.002, rawSunDot) / L_tan_len) * uTerrainShadowElevation;
 
           float shadowOcclusion = 0.0;
+          float hCenter = texture2D(uBumpTexture, vUv).r;
 
           // 6-step directional shadow march facing the low-angle sun
           for (int i = 1; i <= 6; i++) {

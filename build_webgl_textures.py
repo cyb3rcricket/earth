@@ -93,6 +93,17 @@ Examples:
         help="Generate high-precision tangent-space normal map (normal.png) from elevation relief"
     )
     parser.add_argument(
+        "--normal-only",
+        action="store_true",
+        help="Generate only the tangent-space normal map (normal.png) without rebuilding other textures"
+    )
+    parser.add_argument(
+        "--normal-scale",
+        type=float,
+        default=2.05,
+        help="Scale factor for tangent-space normal gradient (default: 2.05, matching shader uBumpScale)"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print configuration and verify source files without processing textures"
@@ -266,15 +277,15 @@ def smoothstep(e0, e1, x):
     return t * t * (3.0 - 2.0 * t)
 
 
-def generate_tangent_space_normal_map(bump_rgb, width, height, seam_w, scale_factor=2.0):
+def generate_tangent_space_normal_map(bump_rgb, width, height, seam_w, scale_factor=2.05, spec_mask=None):
     """Generate high-precision tangent-space normal map (normal.png) from elevation bump data.
 
     Uses a 3x3 Sobel filter and equirectangular metric tensor scale compensation
     (1.0 / max(0.06, sin(pi * v))) to eliminate polar distortion and preserve crisp mountain relief.
     Format:
-      R = Tangent X (East / West) in [0, 255]
-      G = Tangent Y (North / South) in [0, 255]
-      B = Tangent Z (Normal / Outward) in [0, 255]
+      R = Tangent X (East / West, +u) in [0, 255]
+      G = Tangent Y (North / South, +v) in [0, 255]
+      B = Tangent Z (Normal / Outward, +z) in [0, 255]
     """
     normal_rgb = bytearray(width * height * 3)
     row_bytes = width * 3
@@ -294,13 +305,24 @@ def generate_tangent_space_normal_map(bump_rgb, width, height, seam_w, scale_fac
 
         sx = scale_x_lut[y] * scale_factor
         sy = scale_factor
+        row_mask_start = y * width
 
         for x in range(width):
+            # Land masking: if specular water mask indicates water (>= 128), set flat normal (0, 0, 1)
+            if spec_mask is not None and spec_mask[row_mask_start + x] >= 128:
+                dst_idx = dst_row + x * 3
+                normal_rgb[dst_idx]     = 128
+                normal_rgb[dst_idx + 1] = 128
+                normal_rgb[dst_idx + 2] = 255
+                continue
+
             xm1 = ((x - 1 + width) % width) * 3
             x0 = x * 3
             xp1 = ((x + 1) % width) * 3
 
             # 3x3 Sobel neighborhood (grayscale elevation from red channel)
+            # y_prev is North (row y-1), y_curr is center (row y), y_next is South (row y+1)
+            # xm1 is West (col x-1), x0 is center (col x), xp1 is East (col x+1)
             h00 = bump_rgb[y_prev + xm1] * inv_255
             h10 = bump_rgb[y_prev + x0]  * inv_255
             h20 = bump_rgb[y_prev + xp1] * inv_255
@@ -312,9 +334,11 @@ def generate_tangent_space_normal_map(bump_rgb, width, height, seam_w, scale_fac
             h12 = bump_rgb[y_next + x0]  * inv_255
             h22 = bump_rgb[y_next + xp1] * inv_255
 
-            # Sobel gradients
+            # Sobel gradients:
+            # gx: East (+x, xp1) minus West (-x, xm1) -> dH/du
             gx = ((h20 + 2.0 * h21 + h22) - (h00 + 2.0 * h01 + h02)) * 0.125 * sx
-            gy = ((h02 + 2.0 * h12 + h22) - (h00 + 2.0 * h10 + h20)) * 0.125 * sy
+            # gy: North (-y in image, y_prev) minus South (+y in image, y_next) -> dH/dv (+v is North)
+            gy = ((h00 + 2.0 * h10 + h20) - (h02 + 2.0 * h12 + h22)) * 0.125 * sy
 
             # Tangent-space normal vector: (-gx, -gy, 1.0) normalized
             inv_len = 1.0 / math.sqrt(gx * gx + gy * gy + 1.0)
@@ -323,9 +347,9 @@ def generate_tangent_space_normal_map(bump_rgb, width, height, seam_w, scale_fac
             nz = 1.0 * inv_len
 
             dst_idx = dst_row + x0
-            normal_rgb[dst_idx]     = int((nx * 0.5 + 0.5) * 255.0)
-            normal_rgb[dst_idx + 1] = int((ny * 0.5 + 0.5) * 255.0)
-            normal_rgb[dst_idx + 2] = int((nz * 0.5 + 0.5) * 255.0)
+            normal_rgb[dst_idx]     = int(round(max(0.0, min(1.0, nx * 0.5 + 0.5)) * 255.0))
+            normal_rgb[dst_idx + 1] = int(round(max(0.0, min(1.0, ny * 0.5 + 0.5)) * 255.0))
+            normal_rgb[dst_idx + 2] = int(round(max(0.0, min(1.0, nz * 0.5 + 0.5)) * 255.0))
 
     apply_seam_blend_rgb(normal_rgb, width, height, seam_w)
     return normal_rgb
@@ -377,6 +401,45 @@ def main():
 
     os.makedirs(earth_dir, exist_ok=True)
     t0 = time.time()
+
+    # -------------------------------------------------------------------------
+    # Fast path: --normal-only (generate only normal.png)
+    # -------------------------------------------------------------------------
+    if args.normal_only:
+        print("\n[Normal Map Only] Processing normal.png (tangent-space normal map)...")
+        # Find elevation source: prefer existing earth/bump.png if matching target resolution, else src_bump
+        bump_path = os.path.join(earth_dir, "bump.png")
+        if not os.path.isfile(bump_path):
+            bump_path = src_bump
+        if not bump_path or not os.path.isfile(bump_path):
+            raise FileNotFoundError(f"Elevation bump source not found in {earth_dir} or {raw_dir}")
+
+        print(f" - Loading elevation data from: {os.path.basename(bump_path)}")
+        bw, bh, bump_rgb = resample_and_load_bmp(bump_path, width, height)
+        apply_seam_blend_rgb(bump_rgb, width, height, seam_w)
+
+        # Specular water mask for ocean flattening
+        spec_mono = None
+        spec_path = os.path.join(earth_dir, "specular.png")
+        if not os.path.isfile(spec_path):
+            spec_path = src_spec
+        if spec_path and os.path.isfile(spec_path):
+            print(f" - Loading specular water mask from: {os.path.basename(spec_path)}")
+            sw, sh, spec_raw = resample_and_load_bmp(spec_path, width, height)
+            lut_spec = bytes([0 if i < 128 else 255 for i in range(256)])
+            spec_mono = spec_raw[0::3].translate(lut_spec)
+
+        print(f" - Computing 3x3 Sobel tangent normals with metric scale (scale={args.normal_scale})...")
+        normal_rgb = generate_tangent_space_normal_map(
+            bump_rgb, width, height, seam_w,
+            scale_factor=args.normal_scale,
+            spec_mask=spec_mono
+        )
+        dst_normal = os.path.join(earth_dir, "normal.png")
+        write_png_rgb(dst_normal, width, height, normal_rgb)
+        total_time = time.time() - t0
+        print(f"\n✨ Tangent-space normal map ({width}x{height}) successfully built in {total_time:.2f}s!", flush=True)
+        return
 
     # -------------------------------------------------------------------------
     # 1. Background stars.jpg (Milky Way celestial sphere)
@@ -472,7 +535,11 @@ def main():
     # Optional high-precision tangent-space normal map (normal.png)
     if args.normal_map:
         print("   Generating tangent-space normal map (normal.png) with metric scale compensation...")
-        normal_rgb = generate_tangent_space_normal_map(bump_rgb, width, height, seam_w)
+        normal_rgb = generate_tangent_space_normal_map(
+            bump_rgb, width, height, seam_w,
+            scale_factor=args.normal_scale,
+            spec_mask=spec_mono
+        )
         write_png_rgb(os.path.join(earth_dir, "normal.png"), width, height, normal_rgb)
 
     # -------------------------------------------------------------------------

@@ -24,15 +24,19 @@ A high-fidelity, physically-principled 3D interactive visualization of Planet Ea
   - [Orbital Telemetry & Presentation HUD](#orbital-telemetry--presentation-hud)
   - [Accessibility & Motion Preferences](#accessibility--motion-preferences)
 - [Shader Architecture](#shader-architecture)
+  - [Optical Foundations & Atmospheric Physics](#1-optical-foundations--atmospheric-physics)
+  - [High-Precision Normal Mapping & Relief Self-Shadowing](#2-high-precision-normal-mapping--relief-self-shadowing)
+  - [Shader Breakdown](#3-shader-breakdown)
 
 ---
 
 ## Overview & Visual Architecture
 
-The visualization renders Earth as a compound celestial body adhering to astronomical geometry and illumination optics:
+Planet Earth is rendered in a physically-principled Three.js WebGL viewport featuring:
 
 ```
 Celestial Universe Scene
+├── Skybox Background (Equirectangular Deep Space Sphere)
 ├── Celestial Star Sphere (Radius: 150.0, Inverted Sphere)
 ├── Deep Space Star Particles (1,800 stars with 3 stellar classification tints)
 └── Axial Tilt Group (Fixed 23.44° Obliquity of the Ecliptic: degToRad(-23.44))
@@ -53,7 +57,7 @@ Celestial Universe Scene
 - **Multi-Layer Celestial Hierarchy**: Separate scene graph nodes for planetary tilt, surface rotation, cloud rotation, and static cosmic environments.
 - **Custom GLSL Shaders**:
   - Blinn-Phong specular sunglint on water bodies with zero specular reflection on landmasses.
-  - High-precision tangent-space normal mapping via a $3 \times 3$ Sobel filter with equirectangular metric tensor compensation ($\text{scale}_x = 1 / \max(0.06, \sin(\pi v))$), delivering sharp, undistorted mountain relief across all latitudes (Himalayas, Andes, Alps, Rockies).
+  - High-precision precomputed tangent-space normal mapping (`normal.png`) with equirectangular metric tensor compensation ($\text{scale}_x = 1 / \max(0.06, \sin(\pi v))$), delivering sharp, undistorted mountain relief across all latitudes (Himalayas, Andes, Alps, Rockies).
   - Directional horizon relief self-shadowing along the terminator, where adjacent mountain peaks cast sharp, jagged cast shadows across valleys and plains at grazing sun angles.
   - Singularity-free analytic orthonormal tangent frame $(T, B, N)$ eliminating polar distortions.
   - Rayleigh sunset/twilight rim scattering with warm golden-orange coloration along the day/night terminator.
@@ -123,8 +127,8 @@ These are the primary 2:1 equirectangular textures loaded at runtime by `js/main
 | Asset Path | Dimensions | Channels | Authoritative Source & Shader Role |
 | :--- | :--- | :--- | :--- |
 | `assets/earth/albedo.png` | 4096×2048 | RGB (8-bit) | **NASA Blue Marble Next Generation**: True-color satellite albedo captured by NASA's MODIS sensors. Features authentic continental biomes, vegetated canopies, arid deserts, polar ice, and shallow coastal turquoise bathymetry (Caribbean, Great Barrier Reef). Sampled by `EarthSurfaceShader.uDayTexture`. |
-| `assets/earth/bump.png` | 4096×2048 | RGB (8-bit) | **NASA Earth Observatory (ID 73934) & GEBCO**: Measured digital elevation model (DEM) encoding global topography (Himalayas, Andes, Rockies, Alps, East African Rift). Sampled by `EarthSurfaceShader.uBumpTexture` for real-time Sobel normal perturbation and 6-step horizon self-shadowing along the terminator. |
-| `assets/earth/normal.png` | 4096×2048 | RGB (8-bit) | **Tangent-Space Normal Map (Optional)**: Precomputed high-precision tangent-space normal map generated via `python3 build_webgl_textures.py --normal-map` incorporating equirectangular metric tensor scale compensation. |
+| `assets/earth/bump.png` | 4096×2048 | RGB (8-bit) | **NASA Earth Observatory (ID 73934) & GEBCO**: Digital elevation model (DEM) encoding global topographic relief. Sampled by `EarthSurfaceShader.uBumpTexture` exclusively in the grazing terminator zone for 6-step directional mountain horizon self-shadowing. |
+| `assets/earth/normal.png` | 4096×2048 | RGB (8-bit) | **Precomputed Tangent-Space Normal Map**: High-precision non-color linear tangent-space normal map precomputed from elevation relief with equirectangular metric tensor compensation and land masking. Sampled by `EarthSurfaceShader.uNormalTexture` for terrain surface lighting, eliminating the per-fragment 3×3 Sobel reconstruction. |
 | `assets/earth/night.png` | 4096×2048 | RGB (8-bit) | **NASA Black Marble / Suomi NPP VIIRS**: Nocturnal city lights mapped with high geographic precision. Processed with land-masking to guarantee zero light spill over open oceans, with warm golden-amber incandescent glow. Sampled by `EarthSurfaceShader.uNightTexture`. |
 | `assets/earth/specular.png` | 4096×2048 | RGB (8-bit) | **NASA Blue Marble Hydrography Mask**: High-contrast binary water mask ($1.0$ on oceans, seas, and major lakes, $0.0$ on land). Modulates Blinn-Phong specular sunglint on water bodies. Sampled by `EarthSurfaceShader.uSpecularTexture`. |
 | `assets/earth/clouds.png` | 4096×2048 | RGBA (8-bit) | **NASA MODIS Global Cloud Composite**: Satellite-derived cloud coverage with optical depth mapped to alpha transparency ($0.0$ for clear skies, up to $0.95$ for storm centers). Casts dynamic ground shadows on terrain and renders independently on the cloud sphere. Sampled by `CloudsShader.uCloudsTexture` and `EarthSurfaceShader.uCloudsTexture`. |
@@ -185,6 +189,9 @@ python3 build_webgl_textures.py [OPTIONS]
 | `--raw-dir PATH` | `./assets/raw` | Input directory containing raw NASA source textures. |
 | `--earth-dir PATH` | `./assets/earth` | Output directory for WebGL textures. |
 | `--seam-width WIDTH` | `64` | Symmetric horizontal smoothstep cross-fade seam blend width in pixels along the $180^\circ$ meridian. |
+| `--normal-map` | `False` | Generate high-precision tangent-space normal map (`normal.png`) from elevation relief as part of the full build. |
+| `--normal-only` | `False` | Fast path: generate only `normal.png` using existing `bump.png` and `specular.png` (or raw source). |
+| `--normal-scale SCALE` | `2.05` | Slope scale multiplier for tangent-space normal gradient (default: 2.05, matching shader `uBumpScale`). |
 | `--dry-run` | `False` | Inspect input paths, target directories, and asset existence without writing files. |
 
 #### CLI Examples
@@ -193,14 +200,22 @@ python3 build_webgl_textures.py [OPTIONS]
 # Display help and options
 python3 build_webgl_textures.py --help
 
-# Generate default high-resolution 4K (4096x2048) production textures
-python3 build_webgl_textures.py
+# Generate default high-resolution 4K (4096x2048) production textures including normal.png
+python3 build_webgl_textures.py --normal-map
 
-# Generate ultra-high-resolution 8K (8192x4096) master textures
-python3 build_webgl_textures.py --preset 8k
+# Fast rebuild of only normal.png at default 4K resolution (under 10s)
+python3 build_webgl_textures.py --normal-only
 
-# Generate 2K (2048x1024) performance textures
-python3 build_webgl_textures.py --preset 2k
+# Generate 1K, 2K, or 8K normal maps
+python3 build_webgl_textures.py --normal-only --preset 1k
+python3 build_webgl_textures.py --normal-only --preset 2k
+python3 build_webgl_textures.py --normal-only --preset 8k
+
+# Generate ultra-high-resolution 8K (8192x4096) full texture suite with normal map
+python3 build_webgl_textures.py --preset 8k --normal-map
+
+# Generate 2K (2048x1024) performance textures with normal map
+python3 build_webgl_textures.py --preset 2k --normal-map
 
 # Validate sources and configuration without writing files
 python3 build_webgl_textures.py --dry-run
@@ -372,21 +387,45 @@ $$f_{\text{taper}}(h) = 1.0 - \text{smoothstep}\left(0.70, 1.0, \frac{h}{R_{\tex
 
 ### 2. High-Precision Normal Mapping & Relief Self-Shadowing
 
-#### Elevation Gradient Formulation
-A standard forward difference $\frac{h(u + \Delta u) - h(u)}{\Delta u}$ is 1st-order accurate $\mathcal{O}(\Delta u)$, introducing phase shifts and ridge blurring. To resolve crisp mountain ridges (Himalayas, Andes, Rockies, Alps), a symmetric 2D $3 \times 3$ Sobel filter evaluates the continuous partial spatial derivatives:
+The terrain lighting architecture separates surface normal lighting from elevation-based horizon shadowing:
+- **`normal.png`** (Tangent-Space Normal Map): Handles surface normal perturbation and fine topographic relief lighting across all illuminated landmasses via a single texture sample.
+- **`bump.png`** (Digital Elevation Model): Preserved exclusively for the 6-step directional terrain horizon self-shadow raymarch along the low-angle solar terminator.
 
-$$G_u = \frac{\partial h}{\partial u} = \frac{1}{8} \begin{bmatrix} -1 & 0 & 1 \\ -2 & 0 & 2 \\ -1 & 0 & 1 \end{bmatrix} * h(u, v), \quad G_v = \frac{\partial h}{\partial v} = \frac{1}{8} \begin{bmatrix} -1 & -2 & -1 \\ 0 & 0 & 0 \\ 1 & 2 & 1 \end{bmatrix} * h(u, v)$$
+#### Offline Precomputed Normal Map Generation
+Evaluating a $3 \times 3$ Sobel neighborhood dynamically on the GPU required 9 texture samples of `uBumpTexture`, coordinate math, trigonometric latitude metric scaling, and derivative calculations for every rendered surface fragment. To optimize GPU performance, this operation is precomputed offline into `assets/earth/normal.png` by `build_webgl_textures.py`.
+
+A symmetric 2D $3 \times 3$ Sobel filter evaluates the continuous partial spatial derivatives from the elevation data:
+
+$$G_u = \frac{\partial h}{\partial u} = \frac{1}{8} \begin{bmatrix} -1 & 0 & 1 \\ -2 & 0 & 2 \\ -1 & 0 & 1 \end{bmatrix} * h(u, v), \quad G_v = \frac{\partial h}{\partial v} = \frac{1}{8} \begin{bmatrix} 1 & 2 & 1 \\ 0 & 0 & 0 \\ -1 & -2 & -1 \end{bmatrix} * h(u, v)$$
+
+*(Note: in equirectangular image pixel coordinates where row index $y$ increases southward while UV coordinate $v$ increases northward, $G_v$ computes north-minus-south elevation gradient).*
 
 #### Equirectangular Metric Tensor Scale Compensation
 In a 2:1 equirectangular projection, lines of longitude converge toward the poles as $\cos(\text{lat}) = \sin(\pi v)$. Without metric tensor compensation, horizontal pixel spacing $\Delta u$ represents a physically smaller distance at high latitudes than at the equator, causing severe flattening of mid- and high-latitude topography. The exact metric compensation factor is:
 
 $$\text{scale}_x(v) = \frac{1.0}{\max(0.06, \sin(\pi v))}$$
 
-The physical gradient vector components are thus:
+The physical gradient vector components are:
 
 $$G_x = G_u \cdot \text{scale}_x(v) \cdot \mu_{\text{bump}} \cdot (1 - M_{\text{ocean}}), \quad G_y = G_v \cdot \mu_{\text{bump}} \cdot (1 - M_{\text{ocean}})$$
 
-where $\mu_{\text{bump}}$ is the user bump scale uniform (`uBumpScale = 2.05`) and $M_{\text{ocean}} \in [0, 1]$ is the hydrographic specular mask (preventing false bathymetry bumps over ocean water).
+where $\mu_{\text{bump}}$ is the bump scale factor (`scale_factor = 2.05`) and $M_{\text{ocean}} \in [0, 1]$ is the hydrographic specular mask (ensuring ocean waters remain completely flat $(128, 128, 255)$).
+
+The tangent-space unit normal $\hat{\mathbf{n}}_{\text{tan}} = \text{normalize}(-G_x, -G_y, 1.0)$ is encoded into 8-bit RGB channels $[0, 255]$:
+- $\text{R} = \text{int}((\hat{n}_x \times 0.5 + 0.5) \times 255)$ (Tangent X: East / West, $+u$)
+- $\text{G} = \text{int}((\hat{n}_y \times 0.5 + 0.5) \times 255)$ (Tangent Y: North / South, $+v$)
+- $\text{B} = \text{int}((\hat{n}_z \times 0.5 + 0.5) \times 255)$ (Tangent Z: Outward Normal, $+z$)
+
+The texture is treated strictly as **linear non-color data** (`THREE.NoColorSpace`), preventing any gamma distortion.
+
+#### Runtime Tangent-Space Normal Decoding & World Transformation
+In `EarthSurfaceShader`, the precomputed normal map is sampled once:
+
+$$\mathbf{n}_{\text{tan}} = \text{texture2D}(uNormalTexture, \mathbf{uv}).\text{rgb} \times 2.0 - 1.0$$
+
+The tangent-space vector is modulated by `uNormalScale` and the runtime `landMask`, then transformed into world space using the singularity-free analytic orthonormal tangent frame $(T, B, N)$:
+
+$$\mathbf{N}_{\text{perturbed}} = \text{normalize}\left(n_{\text{tan}, x} \cdot \mathbf{T} + n_{\text{tan}, y} \cdot \mathbf{B} + n_{\text{tan}, z} \cdot \mathbf{N}\right)$$
 
 #### Singularity-Free Orthonormal Tangent Frame
 To eliminate the classical polar gimbal lock singularity $\mathbf{N} \times (0, 1, 0) \to \mathbf{0}$, the exact planetary spin axis $\mathbf{U}_{\text{world}} = \text{normalize}(\mathbf{M}_{\text{world}} \cdot (0, 1, 0, 0)^T)$ is transformed dynamically to construct an orthonormal basis $(T, B, N)$:
@@ -397,13 +436,8 @@ $$\mathbf{B} = \mathbf{N} \times \mathbf{T}$$
 
 where $\mathbf{A}_{\text{ref}}$ is a stable orthogonal reference axis. Tangent $\mathbf{T}$ points strictly East along lines of latitude ($+u$), and bitangent $\mathbf{B}$ points strictly North along lines of longitude ($+v$).
 
-#### High-Precision Surface Normal Perturbation
-From differential surface geometry, the analytical perturbed normal of a heightfield $h(t, b)$ over the tangent plane is:
-
-$$\mathbf{N}_{\text{perturbed}} = \text{normalize}\left(\mathbf{N} - (G_x \mathbf{T} + G_y \mathbf{B})\right)$$
-
 #### Directional Mountain Horizon Self-Shadowing along Terminator
-In the terminator zone ($\mathbf{N} \cdot \mathbf{L} \in [-0.06, 0.28]$), incident sunlight grazes the planet at low elevation angles $\theta_{\text{sun}}$. The incident solar vector $\mathbf{L}$ is projected into the orthonormal tangent plane $(T, B)$:
+`bump.png` remains responsible for low-angle terrain self-shadowing. In the terminator zone ($\mathbf{N} \cdot \mathbf{L} \in [-0.06, 0.28]$), incident sunlight grazes the planet at low elevation angles. The incident solar vector $\mathbf{L}$ is projected into the orthonormal tangent plane $(T, B)$:
 
 $$\mathbf{L}_{\text{tangent}} = \begin{pmatrix} \mathbf{L} \cdot \mathbf{T} \\ \mathbf{L} \cdot \mathbf{B} \end{pmatrix}, \quad \hat{\mathbf{L}}_{\text{tangent}} = \frac{\mathbf{L}_{\text{tangent}}}{\|\mathbf{L}_{\text{tangent}}\|}$$
 
@@ -423,7 +457,11 @@ The shadow factor is smoothly blended into full daytime diffuse irradiance as th
 
 $$S_{\text{terrain}} = 1.0 - S_{\text{occlusion}} \cdot \text{smoothstep}(0.26, 0.06, \mathbf{N} \cdot \mathbf{L}) \cdot \text{smoothstep}(-0.06, -0.01, \mathbf{N} \cdot \mathbf{L}) \cdot \left(\frac{u_{\text{shadow}}}{100}\right)$$
 
-Direct daylight illumination and twilight fringe are modulated by $S_{\text{terrain}}$, causing valleys and plains to fall into deep shadow while mountain peaks (Himalayas, Andes, Alps, Rockies, East African Rift) catch the radiant golden rays of the rising and setting sun.
+#### Performance Optimization & Texture Sample Reduction
+- **Daylight Surface (away from terminator)**: Terrain normal reconstruction drops from 9 bump texture samples down to **1 normal map sample** (88.9% reduction in texture samples).
+- **Nightside Surface**: Drops from 9 bump texture samples down to **1 normal map sample** (88.9% reduction).
+- **Terminator Zone**: 9 bump samples for Sobel normal calculation are replaced by 1 normal map sample, retaining the 6 directional march samples + 1 center sample only where $\mathbf{N} \cdot \mathbf{L} \in [-0.06, 0.28]$.
+- Across >90% of the planetary surface, per-fragment texture fetches for terrain relief are reduced from 9 to 1, while preserving identical mountain prominence and crisp relief across all latitudes.
 
 ---
 
@@ -443,8 +481,8 @@ Direct daylight illumination and twilight fringe are modulated by $S_{\text{terr
    - Dissolves to zero on the dark hemisphere and away from the sun, preventing ghost glows or concentric ring artifacts.
 
 3. **`EarthSurfaceShader`**:
-   - **High-Precision Normal Perturbation**: Evaluates $3 \times 3$ Sobel elevation gradients with equirectangular metric tensor compensation and singularity-free analytic tangent frames.
-   - **Terminator Mountain Relief Self-Shadowing**: Fast 6-step directional shadow raymarch along the projected tangent sun vector casting dramatic mountain shadows across valleys at sunrise/sunset.
+   - **High-Precision Tangent-Space Normal Mapping**: Samples the precomputed linear non-color tangent-space normal map (`normal.png`) with metric tensor scale compensation and singularity-free analytic tangent frame $(T, B, N)$, eliminating runtime 3×3 Sobel elevation reconstruction.
+   - **Terminator Mountain Relief Self-Shadowing**: Fast 6-step directional shadow raymarch using `bump.png` elevation data along the projected tangent sun vector casting dramatic mountain shadows across valleys at sunrise/sunset.
    - **Ocean Specular Glint**: Evaluates Blinn-Phong half-angle reflection modulated by the NASA Blue Marble hydrographic mask, restricted strictly to water surfaces.
    - **Physically-Derived Sunset Terminator**: Attenuates daylight irradiance via the Beer-Lambert law ($T_{\text{sun}} = \exp(-\boldsymbol{\tau}_{\text{sun}})$), smoothly transforming daytime satellite colors into warm golden-amber and crimson bands along the terminator ($\mathbf{N} \cdot \mathbf{L} \approx 0$).
    - **Aerial Perspective & Stratospheric Limb Haze**: Evaluates view-angle optical depth $\boldsymbol{\tau}_{\text{view}}$ and inscattering $\mathbf{L}_{\text{in}}$ matching the atmospheric Rayleigh coefficients. At the planetary limb ($\mathbf{N} \cdot \mathbf{V} \to 0$), the terrain dissolves seamlessly into the atmospheric envelope with zero boundary mismatch.
