@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planet Earth &bull; Photorealistic 3D WebGL Visualization</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./js/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Space Viewport Container -->
+  <div class="space-viewport">
+    <!-- WebGL Hardware-Accelerated 3D Earth Canvas -->
+    <canvas id="webglCanvas" tabindex="0" role="region" aria-label="Interactive 3D Earth. Drag to rotate, scroll or pinch to zoom."></canvas>
+
+    <!-- Minimalist, non-intrusive telemetry badge (bottom-left) -->
+    <div class="telemetry-badge" aria-label="Orbital telemetry">
+      <div class="telemetry-item"><span class="telemetry-label">ALTITUDE</span><span class="telemetry-val" id="altDisplay">35,786 km</span></div>
+      <div class="telemetry-item"><span class="telemetry-label">INCLINATION</span><span class="telemetry-val">23.44&deg;</span></div>
+      <div class="telemetry-item"><span class="telemetry-label">SUB-SATELLITE</span><span class="telemetry-val" id="coordsDisplay">0.0&deg; N, 0.0&deg; E</span></div>
+      <div class="telemetry-item"><span class="telemetry-label">PERIOD</span><span class="telemetry-val" id="periodDisplay">90.0s</span></div>
+    </div>
+
+    <!-- Minimalist Presentation Controls (bottom-right, unobtrusive) -->
+    <aside class="hud-controls" id="hudControls">
+      <button class="hud-toggle-btn" id="hudToggleBtn" title="Toggle Controls HUD" aria-label="Toggle Controls HUD">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+
+      <div class="hud-panel" id="hudPanel">
+        <div class="hud-header">
+          <span>PLANETARY PARAMETERS</span>
+        </div>
+
+        <div class="hud-row">
+          <label for="rotationSpeed">Rotation Speed</label>
+          <input type="range" id="rotationSpeed" min="20" max="180" value="90" step="5">
+          <span class="hud-val" id="rotationVal">90s</span>
+        </div>
+
+        <div class="hud-row">
+          <label for="cloudOpacity">Cloud Density</label>
+          <input type="range" id="cloudOpacity" min="0" max="100" value="90" step="5">
+          <span class="hud-val" id="cloudVal">90%</span>
+        </div>
+
+        <div class="hud-row">
+          <label for="atmosphereIntensity">Atmosphere Glow</label>
+          <input type="range" id="atmosphereIntensity" min="0" max="150" value="100" step="5">
+          <span class="hud-val" id="atmosphereVal">100%</span>
+        </div>
+
+        <div class="hud-row">
+          <label for="shadowStrength">Shadow Depth</label>
+          <input type="range" id="shadowStrength" min="60" max="100" value="95" step="1">
+          <span class="hud-val" id="shadowVal">95%</span>
+        </div>
+
+        <div class="hud-actions">
+          <button class="hud-btn" id="pauseBtn" aria-label="Pause or resume rotation">Pause</button>
+          <button class="hud-btn" id="resetBtn" aria-label="Reset parameters to default">Reset</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
