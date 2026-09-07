@@ -48,7 +48,14 @@ export const EarthSurfaceShader = {
     uBumpScale: { value: 2.05 },
     uNormalScale: { value: 1.0 },
     uTerrainShadowStrength: { value: 1.0 },
-    uTerrainShadowElevation: { value: 0.048 }
+    uTerrainShadowElevation: { value: 0.048 },
+    // Ocean microfacet BRDF uniforms
+    uOceanRoughness: { value: 0.16 },
+    uOceanF0: { value: 0.02 },
+    uOceanGlintIntensity: { value: 0.35 },
+    uOceanMicroWaveScale: { value: 350.0 },
+    uOceanMicroWaveStrength: { value: 0.035 },
+    uTime: { value: 0.0 }
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -56,6 +63,7 @@ export const EarthSurfaceShader = {
     varying vec3 vWorldNormal;
     varying vec3 vWorldPosition;
     varying vec3 vWorldUp;
+    varying vec3 vLocalPosition;
 
     void main() {
       vUv = uv;
@@ -65,6 +73,8 @@ export const EarthSurfaceShader = {
       vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
       // Planetary polar axis (South to North) in world coordinates
       vWorldUp = normalize((modelMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+      // Object-space coordinate rotating rigidly with Earth geometry
+      vLocalPosition = position;
       gl_Position = projectionMatrix * viewMatrix * worldPos;
     }
   `,
@@ -88,11 +98,20 @@ export const EarthSurfaceShader = {
     uniform float uTerrainShadowStrength;
     uniform float uTerrainShadowElevation;
 
+    // Ocean microfacet BRDF uniforms
+    uniform float uOceanRoughness;
+    uniform float uOceanF0;
+    uniform float uOceanGlintIntensity;
+    uniform float uOceanMicroWaveScale;
+    uniform float uOceanMicroWaveStrength;
+    uniform float uTime;
+
     varying vec2 vUv;
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
     varying vec3 vWorldPosition;
     varying vec3 vWorldUp;
+    varying vec3 vLocalPosition;
 
     const float PI = 3.14159265358979323846;
     // Matching atmospheric optical constants
@@ -124,20 +143,72 @@ export const EarthSurfaceShader = {
       vec3 B = cross(norm, T);
 
       // -----------------------------------------------------------------------
-      // 2. High-Precision Normal Perturbation (Precomputed Tangent Normal Map)
+      // 2. High-Precision Normal Perturbation (Separated Land vs. Ocean)
       // -----------------------------------------------------------------------
       // Specular water mask (1.0 on oceans/lakes, 0.0 on land)
       float specMask = texture2D(uSpecularTexture, vUv).r;
-      float landMask = 1.0 - smoothstep(0.15, 0.70, specMask);
+      float waterMask = smoothstep(0.15, 0.70, specMask);
+      float landMask = 1.0 - waterMask;
 
-      // Tangent-space normal lookup from precomputed normal map
+      // Tangent-space normal lookup from precomputed normal map for land terrain
       vec3 normalSample = texture2D(uNormalTexture, vUv).rgb;
       vec3 nTan = normalSample * 2.0 - 1.0;
-      vec3 perturbedTan = vec3(nTan.xy * uNormalScale * landMask, nTan.z);
-      vec3 perturbedNormal = normalize(perturbedTan.x * T + perturbedTan.y * B + perturbedTan.z * norm);
+      vec3 landTan = vec3(nTan.xy * uNormalScale * landMask, nTan.z);
+      vec3 landNormal = normalize(landTan.x * T + landTan.y * B + landTan.z * norm);
+
+      // Subtle geographically anchored ocean micro-normals (rotates with planet)
+      vec3 normLoc = normalize(vLocalPosition);
+      vec3 TLoc = cross(vec3(0.0, 1.0, 0.0), normLoc);
+      float tLocLen = length(TLoc);
+      if (tLocLen > 1e-4) {
+        TLoc /= tLocLen;
+      } else {
+        vec3 refAxisLoc = (abs(normLoc.y) < 0.9) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        TLoc = normalize(cross(vec3(0.0, 1.0, 0.0), refAxisLoc));
+      }
+      vec3 BLoc = cross(normLoc, TLoc);
+
+      // Multi-octave isotropic cellular wave gradient in object-space coordinates
+      vec3 pWave = normLoc * uOceanMicroWaveScale;
+      float tDrift = uTime * 0.35;
+
+      vec3 d1 = vec3(0.894, 0.447, 0.0);
+      vec3 d2 = vec3(-0.447, 0.894, 0.0);
+      vec3 d3 = vec3(0.577, 0.577, 0.577) * 2.2;
+      vec3 d4 = vec3(-0.577, 0.577, -0.577) * 2.2;
+      vec3 d5 = vec3(0.0, 0.707, 0.707) * 4.6;
+      vec3 d6 = vec3(0.707, 0.0, -0.707) * 4.6;
+
+      float ph1 = dot(d1, pWave) + tDrift * 0.8;
+      float ph2 = dot(d2, pWave) - tDrift * 0.6;
+      float ph3 = dot(d3, pWave) + tDrift * 1.3;
+      float ph4 = dot(d4, pWave) - tDrift * 1.1;
+      float ph5 = dot(d5, pWave) + tDrift * 2.1;
+      float ph6 = dot(d6, pWave) - tDrift * 1.7;
+
+      float s1 = sin(ph1), c1 = cos(ph1);
+      float s2 = sin(ph2), c2 = cos(ph2);
+      float s3 = sin(ph3), c3 = cos(ph3);
+      float s4 = sin(ph4), c4 = cos(ph4);
+      float s5 = sin(ph5), c5 = cos(ph5);
+      float s6 = sin(ph6), c6 = cos(ph6);
+
+      vec3 gLoc = (c1 * s2 * d1 + s1 * c2 * d2) * 0.35
+                + (c3 * s4 * d3 + s3 * c4 * d4) * 0.18
+                + (c5 * s6 * d5 + s5 * c6 * d6) * 0.08;
+
+      float slopeEast = dot(gLoc, TLoc);
+      float slopeNorth = dot(gLoc, BLoc);
+
+      // Subtle statistical perturbation (preserves smooth orbital photographic appearance)
+      vec3 oceanTangentPerturb = (slopeEast * T + slopeNorth * B) * (uOceanMicroWaveStrength * 0.08 * waterMask);
+      vec3 oceanNormal = normalize(norm + oceanTangentPerturb);
+
+      // Cleanly blend surface normal between land terrain and ocean surface
+      vec3 surfaceNormal = mix(landNormal, oceanNormal, waterMask);
 
       // Sunlight dot products
-      float sunDot = dot(perturbedNormal, sunDir);
+      float sunDot = dot(surfaceNormal, sunDir);
       float rawSunDot = dot(norm, sunDir);
 
       // -----------------------------------------------------------------------
@@ -195,37 +266,73 @@ export const EarthSurfaceShader = {
       }
 
       // -----------------------------------------------------------------------
-      // 4. Daylight Surface Albedo & Ocean Specular Glint
+      // 4. Daylight Surface Albedo, Cloud Shadow & Incident Sunlight Extinction
       // -----------------------------------------------------------------------
       vec3 dayAlbedo = texture2D(uDayTexture, vUv).rgb;
 
-      // Ocean Specular Glint (Blinn-Phong)
-      vec3 halfVector = normalize(sunDir + viewDir);
-      float specAngle = max(0.0, dot(norm, halfVector));
-      float specular = pow(specAngle, 36.0) * specMask * 1.35 * smoothstep(-0.02, 0.15, rawSunDot);
-      vec3 specColor = vec3(1.0, 0.96, 0.90) * specular;
-
-      // -----------------------------------------------------------------------
-      // 5. Cloud Shadow onto Surface
-      // -----------------------------------------------------------------------
+      // Cloud shadow projected onto planetary surface
       vec2 cloudUv = vec2(fract(vUv.x + uCloudOffset), vUv.y);
       vec2 shadowUv = cloudUv - vec2(sunDir.x * 0.006, sunDir.y * 0.006);
       shadowUv.x = fract(shadowUv.x);
       float cloudShadowAlpha = texture2D(uCloudsTexture, shadowUv).a * (uCloudOpacity / 100.0);
       float cloudShadow = 1.0 - (cloudShadowAlpha * 0.42 * (uShadowStrength / 100.0));
 
-      // -----------------------------------------------------------------------
-      // 6. Incident Sunlight Extinction & Daylight Shading
-      // -----------------------------------------------------------------------
-      // Beer-Lambert law matching Rayleigh lambda^-4 solar atmospheric traversal
+      // Incident sunlight extinction (Beer-Lambert law matching Rayleigh atmospheric traversal)
       float sunAirmass = 1.0 / max(0.038, rawSunDot + 0.05);
       vec3 tauSun = BETA_RAYLEIGH * H_RAYLEIGH * (sunAirmass - 1.0);
       vec3 sunExtinction = exp(-clamp(tauSun, 0.0, 16.0));
       vec3 litSunColor = mix(vec3(1.0), sunExtinction, smoothstep(0.35, -0.02, rawSunDot));
 
+      // -----------------------------------------------------------------------
+      // 5. Ocean Reflection (Physically Grounded Microfacet GGX BRDF)
+      // -----------------------------------------------------------------------
+      vec3 halfVector = normalize(sunDir + viewDir);
+
+      // GGX / Trowbridge-Reitz Microfacet Specular BRDF
+      float NdotH = clamp(dot(oceanNormal, halfVector), 0.0, 1.0);
+      float NdotL = clamp(dot(oceanNormal, sunDir), 0.0, 1.0);
+      float NdotV = clamp(dot(oceanNormal, viewDir), 0.001, 1.0);
+      float VdotH = clamp(dot(viewDir, halfVector), 0.0, 1.0);
+
+      // Microfacet roughness alpha parameter (Cox-Munk ocean wave distribution)
+      float alpha = clamp(uOceanRoughness, 0.02, 1.0);
+      float alpha2 = alpha * alpha;
+
+      // Normal Distribution Function D_GGX
+      float denomD = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      float D = alpha2 / max(1e-5, PI * denomD * denomD);
+
+      // Smith-Schlick joint visibility V(L, V) = G(L, V) / (4 * NdotL * NdotV)
+      float k = alpha * 0.5;
+      float visV = NdotV * (1.0 - k) + k;
+      float visL = NdotL * (1.0 - k) + k;
+      float V = 1.0 / max(1e-5, 4.0 * visV * visL);
+      V = clamp(V, 0.0, 50.0);
+
+      // Schlick Fresnel F(V, H) with dielectric water F0 ~ 0.02
+      float F = uOceanF0 + (1.0 - uOceanF0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+
+      // Direct sunglint specular radiance with relative Fresnel scaling (F / F0)
+      // Direct solar radiance is ~50x above diffuse ambient in normalized unit-illuminance space
+      float glint = D * V * (F / max(1e-4, uOceanF0)) * NdotL * uOceanGlintIntensity;
+
+      // Extinguish across terminator, isolate to water, modulate by cloud shadow & sunlight extinction
+      glint *= waterMask * smoothstep(-0.02, 0.15, rawSunDot);
+      vec3 specColor = vec3(1.0, 0.98, 0.94) * glint * litSunColor * cloudShadow;
+
+      // View-dependent grazing limb reflection of atmospheric skylight
+      float vDotNorm = max(0.0, dot(viewDir, norm));
+      float F_limb = uOceanF0 + (1.0 - uOceanF0) * pow(clamp(1.0 - vDotNorm, 0.0, 1.0), 5.0);
+      vec3 atmoSkyColor = mix(vec3(0.20, 0.55, 0.98), vec3(0.98, 0.48, 0.16), smoothstep(0.15, -0.05, rawSunDot));
+      float limbFactor = (F_limb - uOceanF0) * waterMask * smoothstep(0.0, 0.20, rawSunDot);
+      vec3 oceanLimbReflection = atmoSkyColor * 0.28 * litSunColor * limbFactor;
+
+      // -----------------------------------------------------------------------
+      // 6. Daylight Shading Composition
+      // -----------------------------------------------------------------------
       // Daylight shading modulated with mountain relief self-shadowing and extinction
-      float dayDiffuse = clamp(sunDot * 1.04, 0.0, 1.0) * terrainShadow;
-      vec3 dayColor = (dayAlbedo * dayDiffuse * cloudShadow * litSunColor) + specColor;
+      float dayDiffuse = clamp(sunDot * 1.04, 0.0, 1.0) * mix(terrainShadow, 1.0, waterMask);
+      vec3 dayColor = (dayAlbedo * dayDiffuse * cloudShadow * litSunColor) + specColor + oceanLimbReflection;
 
       // -----------------------------------------------------------------------
       // 7. Rayleigh Twilight Sunset / Terminator Band

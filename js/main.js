@@ -226,7 +226,14 @@ document.addEventListener('DOMContentLoaded', () => {
       uBumpScale: { value: 2.05 },
       uNormalScale: { value: 1.0 },
       uTerrainShadowStrength: { value: 1.0 },
-      uTerrainShadowElevation: { value: 0.048 }
+      uTerrainShadowElevation: { value: 0.048 },
+      // Ocean microfacet BRDF uniforms
+      uOceanRoughness: { value: 0.16 },
+      uOceanF0: { value: 0.02 },
+      uOceanGlintIntensity: { value: 0.35 },
+      uOceanMicroWaveScale: { value: 350.0 },
+      uOceanMicroWaveStrength: { value: 0.035 },
+      uTime: { value: 0.0 }
     },
     vertexShader: EarthSurfaceShader.vertexShader,
     fragmentShader: EarthSurfaceShader.fragmentShader
@@ -411,6 +418,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
   });
 
+  // Expose handles on window for verification, diagnostics and telemetry
+  window.earthControls = controls;
+  window.surfaceMaterial = surfaceMaterial;
+  window.earthRenderer = renderer;
+  window.earthScene = scene;
+  window.earthCamera = camera;
+
   // =========================================================================
   // 8. ANIMATION LOOP
   // =========================================================================
@@ -419,6 +433,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function animate(now) {
     const dtSeconds = Math.min(0.064, (now - prevTimestamp) / 1000.0);
     prevTimestamp = now;
+
+    // Advance ocean micro-normal animation when rotation/motion is active
+    if (surfaceMaterial && surfaceMaterial.uniforms && surfaceMaterial.uniforms.uTime && !controls.isPaused && !controls.isReducedMotion) {
+      surfaceMaterial.uniforms.uTime.value += dtSeconds;
+    }
 
     // Update planetary kinematics, inertia & camera damping
     controls.update(dtSeconds, now);
