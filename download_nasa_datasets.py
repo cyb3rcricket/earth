@@ -21,7 +21,7 @@ import urllib.error
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(SCRIPT_DIR, "assets", "raw")
-USER_AGENT = "EarthVisualizationBot/1.0 (https://github.com/madebytommi/earth; madebytommi@users.noreply.github.com)"
+USER_AGENT = "EarthVisualizationBot/1.0 (https://github.com/cyb3rcricket/earth; 9156878+cyb3rcricket@users.noreply.github.com)"
 
 DATASETS = [
     {
